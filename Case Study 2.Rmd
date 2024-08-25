@@ -1,0 +1,458 @@
+---
+title: "Case Study 2"
+author: "Hannes Guth, Artem Demidov"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+# {.tabset}
+
+## 1. Orthogonal Factor Analysis {.tabset}
+
+### Check for suitability of the data
+```{r, message=FALSE, warning=FALSE}
+# load the necessary packages
+library(psych)
+library(data.table)
+library(knitr)
+library(REdaS)
+library(corrplot)
+library(rcompanion)
+library(ggplot2)
+```
+
+```{r, message=FALSE, warning=FALSE}
+md = fread("Data File_Case_Study_Factor Analysis_MD.csv")
+qds = md[,c(9:41,43:45,51,52,74)] # extract questions, wtps and ris
+qds = qds[complete.cases(qds), ] # delete observations with missing values
+columns = qds[,34:39] # extract every column that is not refering to a question
+qds = qds[,-c(34:39)] # delete those columns
+```
+
+**Go through the steps of a factor analysis that you have learned i.e. start with looking at the correlation matrix, check whether the data set and all of its variables are suitable for factor analysis etc. Make appropriate decisions and decide on a final factor solution**
+
+
+```{r, message=FALSE, warning=FALSE}
+kmo = KMOS(qds) # run the Kaiser-Meyer-Olkin test
+corrplot(kmo$cormat, order = "hclust") # plot the correlation matrix
+```
+\
+This plot gives a first idea which variables could from a factor together, namely those which are in a square in this correlation plot.
+
+The follwwing code will show the *Measure of Sampling Adequacy* of the KMO.
+```{r setup, include=FALSE}
+sort(kmo$MSA)
+```
+
+qd4 and qd23 do not seem to be correlated with any other variable. Nevertheless, they will be kept *for some* analyses because they will gain relevance later on in the case study for making up a whole factor alone and contributing high loadings to this factor.
+
+```{r, message=FALSE, warning=FALSE}
+kmo$KMO
+```
+The value is close to 1 and one can therefore assume that the data is very suitable for a factor analysis. Values below 0.6 or 0.5 would indicate that the data were not suitable.
+
+The following code will execute the Barttlet test for sphericity that tests for the equality of variances between/across populations.
+```{r, message=FALSE, warning=FALSE}
+bart_spher(qds)
+```
+
+The p-Value is very close to 0, H0 can be rejected. One can assume homoscedasticity.
+
+**Overview about the distribution of answers for all questions/variables**
+In the following, one will print the histograms of the answers to the questions to see which distribution they approximately follow.
+```{r, message=FALSE, warning=FALSE, out.width=300}
+for (i in 1:32){
+  plotNormalHistogram(qds[,..i],
+                      xlab = "Scores",
+                      main = paste("Question", i, collapse = ", "),
+                      xlim = c(0, max(qds[,..i])+1))
+}
+```
+\
+The graphs reveal that for most questions, the structure of the answers differs. Some are normally distributed, others are strongly skewed in either direction or do not follow any specific distribution.
+
+### Principal Axis Analysis
+
+**Principal Axis Analysis**
+
+**Make appropriate decisions and decide on a final factor solution**
+
+At first, it is necessary to figure out the appropriate number of factors to use. This will be done by evaluating the eigenvalues of factors and only the number of factors that have an eigenvalue > 1 or close to one will be kept. For this, a first model will be created to extract these eigenvalues, then the number of values will be determined graphically.
+
+```{r, message=FALSE, warning=FALSE}
+r_matrix = corr.test(qds)$r # extracts the correlations between variables
+plot(eigen(r_matrix)$values, main = "Eigenvalues for factor numbers (Scree plot)") + abline(h = 1) # plot the Scree plot
+eigen(r_matrix)$values # show the eigenvalues
+```
+
+The are 8 factors with a value above 1, so the first model will be established with 8 factors. The 9th factor below 1 but will still be considered in a second model because it is still "close", so the 2nd model will take into account 9 factors.
+
+The principal axis factoring model will be established as follows.
+```{r, message=FALSE, warning=FALSE}
+af = fa(kmo$cormat, nfactors = 8, rotate = "varimax") # run a principal axis factoring model
+```
+
+```{r, message=FALSE, warning=FALSE}
+sort(af$communality) # show the communalities
+```
+
+The communality of a variable gives an idea how all factors together explain the variance of the variable. Low values indicate that the variable is not well explained by the factors. Here, qd4 and qd23 have low values and therefore, they will be removed for this approach.
+
+```{r, message=FALSE, warning=FALSE}
+kmo = KMOS(qds[,-c(4,23)]) # delete the columns for qd4 and qd23
+af = fa(kmo$cormat, nfactors = 8, rotate = "varimax") # run the model again
+sort(af$communality) # show the communalities again
+```
+
+One can calculate the eigenvalues for each factor as well as the variance and the part of total variance explained by each factor.
+```{r, message=FALSE, warning=FALSE}
+# Total Variance Explained (approach form the course)
+
+# create an empty data table
+total_var_explained = data.table("eigenvalue" = numeric(length(qds)-2),
+                               "variance" = 0,
+                               "total_variance" = 0)
+
+total_var_explained$eigenvalue = af$e.values # get the eigenvalues
+total_var_explained$variance = (total_var_explained$eigenvalue / (length(qds)-2)) * 100 # get the variance
+total_var_explained$total_variance = cumsum(total_var_explained$eigenvalue / (length(qds)-2)) # get the cumulative variance
+kable(head(total_var_explained, 15)) # show the first 15 rows
+```
+
+The following will show the loadings that each question contributes to each factor.
+
+```{r, message=FALSE, warning=FALSE}
+print(af$Structure, cutoff=0.3, sort=TRUE) # show the loadings matrix
+```
+
+The loadings matrix looks acceptable. Only 1 observation (qd8 for MR1) shows a medium loading value. Nevertheless, the loadings are not too high, no loading reaches 0.9 and only few exceed 0.8. A considerable amount has values between 0.6 and 0.8. 78.7 % of the variance could be explained.\
+Since an additional factor (in addition to the 8) has a value "close" to 1, it will be considered in the following, what might improve the result.
+
+```{r, message=FALSE, warning=FALSE}
+af9 = fa(kmo$cormat, nfactors = 9, rotate = "varimax") # run the axis factoring model with 9 factors
+```
+
+```{r, message=FALSE, warning=FALSE}
+print(af9$Structure, cutoff = 0.3, sort = TRUE) # show the loadings matrix
+```
+\
+The result could be improved. There are fewer medium loadings now what results in a clearer picture. The cumulative variance explained could be improved from 0.787 to 0.793. A further factor will not be taken into account because its value is too far below 1.
+
+**Interpret the factors based on the literature review on quality dimensions (see table 1).**
+
+**Serviceability** - MR2\
+9. the competence of my smartphone’s customer service staff is\
+14. the promptness with which my smartphone’s customer service reacts to my issues is\
+19. the level of professionalism shown by the service staff is\
+21. the accessibility of my smartphone’s customer service is\
+24. the responsiveness of my smartphone’s customer service staff is\
+
+**Performance** - MR1\
+2. my smartphone consistently performs\
+5. the performance of my smartphone is excellent\
+7. the overall performance of my smartphone is\
+12. how well does your smartphone performs its core functions\
+16. the functioning speed of my smartphone (i.e. time taken to turn ON/OFF, open apps, multi-task etc) is\
+
+**Features/Versatility** - MR7\
+6. the innovativeness of the extra features offered by my smartphone is\
+8. the extra features offered in my smartphone usually function\
+18. the excitement I get from my smartphone’s extra features is\
+25. the number of additional features my smartphone offers is\
+
+**Ease of use** - MR4\
+3. my user experience with the various functions my smartphone offers is/was\
+11. my experience to learn how to properly operate my smartphone with all its functionalities is/was\
+13. my smartphone’s ease of use is\
+30. the usability of my smartphone is\
+
+**Reliability/Flawlessness** - MR3\
+22. the severity of defects/glitches of my smartphone is\
+29. the frequency of defects/glitches of my smartphone is\
+33. my smartphone’s probability of failure or malfunctioning\
+
+**Conformance** - MR5\
+15. the endurance of the materials used in my smartphone is\
+17. the robustness of the materials used in my smartphone is\
+32. the standard of materials used in my smart phone is\
+
+**Aesthetics/Appearance** - MR6\
+1. the overall attractiveness of my smartphone is\
+10. the appeal of my smartphone’s design is\
+20. the look- and feel of my smartphone is\
+27. the overall fit and finish of my smartphone is\
+
+**Durability** - MR8\
+26. the time span for which my smartphone runs without any major defects is\
+28. the amount of time for which my smartphone works perfectly even under heavy usage (ex. everyday usage) is\
+31. the life span of my smartphone is\
+
+**Distinctiveness/Prestige** - MR9\
+4. my smartphone is really unique\
+26. the time span for which my smartphone runs without any major defects is\
+
+**Do all of the variables in your final solution show clear loading patterns?**
+\
+This analysis is conducted according to the findings of Thurstone, 1947.\
+
+At first, it will be checked if there are values for each variable that are close to 0. An appropriate cutoff value seems to be 0.15, so in the following, only values larger than 0.15 will be shown and the gaps will stand for close to zero values.
+
+```{r, message=FALSE, warning=FALSE}
+print(af$Structure, cutoff = 0.15, sort = TRUE) # show the loadings matrix with a changed cutoff value to get an overview about the close to zero values
+```
+\
+Approximately 1/3 of the variables does not have a value close to 0, what is not good, using the cutoff value 0.15.\
+Also, the factors do not all have sufficiently many 0 values, e.g. MR1 only has not a single one and MR6 has 2 out of 31. The zero values are in addition similar across factors, meaning that the factors often have zero values for the same variables. These variables are qd22 and qd29 what was to expect from the beginning on. A lot of variables have a correlation with 7 factors of 0.20 to 0.30 while being correlated with the last factor by 0.60 to 0.80.
+
+### Principal Component Analysis
+
+**Principal Component Analysis**
+
+**Are there differences to your solution based on principal axis factoring?**
+
+As for the principal axis factoring, the first thing to be found out is the appropriate number of factors. The same approach will be followed.
+
+```{r, message=FALSE, warning=FALSE}
+pc1 = principal(qds, rotate = "varimax", scores = TRUE) # run a first principal component analysis
+plot(pc1$values, main = "Eigenvalues for factor numbers (Scree plot)") + abline(h=1) # show the scree plot
+pc1$values # show the eigenvalues
+```
+
+8 values have an eigenvalue larger than 1, so the first try will include 8 factors.
+
+```{r, message=FALSE, warning=FALSE}
+pc = principal(qds, rotate = "varimax", nfactors = 8, scores = TRUE) # run a principal component analysis with 8 factors
+```
+
+Now, the explained total variance will be extracted from the model and then examined.
+```{r, message=FALSE, warning=FALSE}
+# Total Variance Explained (approach from the course)
+
+# create an empty data table
+total_var_explained = data.table("eigenvalue" = numeric(length(qds)),
+                               "variance" = 0,
+                               "total_variance" = 0)
+
+total_var_explained$eigenvalue = pc$values # get the eigenvalues
+total_var_explained$variance = (total_var_explained$eigenvalue / length(qds)) * 100 # get the variance
+total_var_explained$total_variance = cumsum(total_var_explained$eigenvalue / length(qds)) # get the accumulated variance
+kable(head(total_var_explained, 15)) # show the first 15 rows
+```
+\
+The first 8 factors, those with an eigenvalue > 1, explain 80.27% of the total variance. It is remarkable that the 1st factor has an eigenvalue of over 15.
+
+The loading matrix looks as follows.
+```{r, message=FALSE, warning=FALSE}
+print(pc$loadings, cutoff=0.3, sort=TRUE) # show the loadings matrix with a cutoff of 0.3
+```
+The structure does not look as clear as for the principal axis factoring because more medium sized loadings appear but one could explain 80.3% of the variance what is a higher value than for the PAF approach.
+
+Nevertheless, since the eigenvalue of the 9th factor is still "close" to 1, this model will be established as follows. If the 9th factor has a clear interpretation and good loadings, this may be reasonable.
+
+```{r, message=FALSE, warning=FALSE}
+pc = principal(qds, rotate = "varimax", nfactors = 9, scores = TRUE) # run a principal component analysis with 9 factors
+sort(pc$communality) # show the communalities
+```
+There are no low communalities observable, so every variable will be kept. qd4 and qd23 still have the lowest values but they are even higher than 0.6.
+
+```{r, message=FALSE, warning=FALSE}
+print(pc$loadings, cutoff = 0.3, sort = TRUE) # show the loadings matrix with the cutoff 0.3
+```
+The pattern of the loadings matrix was enhanced. As could have already been observed in the analysis of the total variance explained, now 82.9% could have been explained table, compared to 80.2% for the model with 8 factors. It does not seem appropriate to exclude any further variables. Choosing 9 factors appears to be the best choice.
+
+The factors can be interpreted in the following way. Most of them are the same as for the principal axis factoring, therefore, the columns will just be renamed. The only new factor that is introduced by including 9 factors is *Distinctiveness/Prestige*. The previously explicitly kept variables qd4 and qd23 alone make up this factor and contribute high loading of 0.803 and 0.717 respectively. For reasons of clearness, abbreviations will be used for the factors.
+
+```{r, message=FALSE, warning=FALSE}
+colnames(pc$Structure) = c("Serv", "Perf", "Ae/App", "EOU", "Feat/Vers", "Dur", "Con", "Rel/Flawl", "Dist/Pr") #  rename the columns with the respective abbreviations
+```
+
+In the following, the loading patterns will be examined as above for the principal axis analysis, setting the same cutoff value of 0.15.
+
+```{r, message=FALSE, warning=FALSE, width = 300}
+print(pc$Structure, cutoff = 0.15, sort = TRUE) # show the loadings matrix with the cutoff 0.15
+```
+\
+There is not a single row that has not at least one near zero value, using the threshold 0.15. Unfortunately, the factors have partly very low numbers of near zero values, like *Performance* that has only 2.\
+Nevertheless, this approach is considered a bit stronger because it explains more of the variance and does not have any severe disadvantages.
+
+**What do the eigenvalues of the factors/quality dimensions tell us about their relevance for repurchase behavior?**
+
+The eigenvalue of a factor defines how much this factor contributes to explain the total variance of repurchase behavior and is the sum of the squared loadings that go into one factor. The larger the eigenvalue of a factor is, the larger is its impact on repurchase behavior without making any statement about the direction of influence.
+
+## 2. Oblique Factor Analysis {.tabset}
+
+### Computational part
+
+In 1. there were no variables excluded because using the principal component analysis delivered results that justified keeping all variables. Therefore, the whole set will be used in this part as well.
+
+**Run an oblique factor analysis with the variables of your final solution in exercise 1 using Promax.**
+```{r, message=FALSE, warning=FALSE}
+pc_pro = principal(qds, rotate = "promax", nfactors = 9, scores = TRUE) # run a principal component analysis with promax
+colnames(pc_pro$loadings) = c("Serv", "Perf", "Ae/App", "EOU", "Feat/Vers", "Dur", "Con", "Rel/Flawl", "Dist/Pr") # rename the columns respectively
+print(round(pc_pro$loadings,4), cutoff = 0.3, sort = TRUE) # print the loadings matrix with the cutoff 0.3
+```
+
+
+**How high are the factors correlated and what is the highest correlation between factors. What does this mean – please explain.**
+
+**The following table shows the correlation between the factors.**
+```{r, message=FALSE, warning=FALSE}
+# rename columns and rows for the correlations and weights tables in pc_pro
+colnames(pc_pro$r.scores) = c("Serv", "Perf", "Ae/App", "EOU", "Feat/Vers", "Dur", "Con", "Rel/Flawl", "Dist/Pr")
+rownames(pc_pro$r.scores) = c("Serv", "Perf", "Ae/App", "EOU", "Feat/Vers", "Dur", "Con", "Rel/Flawl", "Dist/Pr")
+colnames(pc_pro$weights) = c("Serv", "Perf", "Ae/App", "EOU", "Feat/Vers", "Dur", "Con", "Rel/Flawl", "Dist/Pr")
+kable(round(pc_pro$r.scores,2)) # show the correlations
+```
+It is reasonable to use oblique rotation when the correlations between factors are higher than 0.3, what is here the case, regarding the table above.
+
+```{r, message=FALSE, warning=FALSE}
+options(scipen=999) # avoid scientific notation
+corrplot(pc_pro$r.scores) # show the correlation plot
+```
+
+**Interpretation is missing**
+Factor weights
+```{r, message=FALSE, warning=FALSE}
+kable(round(pc_pro$weights,2)) # show the weights table
+```
+
+**Compute factor scores for your factors and name and label them appropriately.**
+```{r, message=FALSE, warning=FALSE}
+qds = cbind(qds, columns, pc_pro$scores) # re-unite qds with the previously extracted wtp and ri elements
+colnames(qds)[40:48] = c("Serviceability", "Performance", "Aesthetics_Appearance", "Ease_of_use", "Features_Versatility", "Durability", "Conformance", "Reliability_Flawlessness", "Distinctiveness_Prestige") # assign the column names
+```
+
+**Compute mean scores for the three willingness to pay premium items (wtp1-wtp3) and the two repurchase intention items (ri1-ri2).**
+```{r, message=FALSE, warning=FALSE}
+qds$mean_wtp = (qds$wtp1 + qds$wtp2 + qds$wtp3)/3 # calculate the mean for the willingnesses to pay
+qds$mean_ri = (qds$ri1 + qds$ri2)/2 # calculate the mean for the repurchase intentions
+```
+
+**Run a regression analysis with the factor scores of the quality dimensions as independent and both the mean score of willingness to pay premium and repurchase intention as dependent variables.**
+```{r, message=FALSE, warning=FALSE}
+model_wtp = lm(mean_wtp ~ Serviceability + Performance + Aesthetics_Appearance + Ease_of_use + Features_Versatility + Durability + Conformance + Reliability_Flawlessness + Distinctiveness_Prestige, qds) # create a linear model for the wtp
+
+summary(model_wtp) # show the model summary
+
+model_ri = lm(mean_ri ~ Serviceability + Performance + Aesthetics_Appearance + Ease_of_use + Features_Versatility + Durability + Conformance + Reliability_Flawlessness + Distinctiveness_Prestige, qds) # create a linear model for ri
+
+summary(model_ri) # show the model summary
+```
+\
+*Serviceability*, *Aesthetics and Appearance*, *Ease of use* and *Destinctiveness and Prestige* are the most relevant factors for the willingness to pay. They are significant at a 0.1% level. *Performance* and *Features and Versatility* play also an important role. They are significant at a 1% level.\
+It seems that for the repurchase behavior the *Performance* and *Aesthetics* together with *Distinctiveness and Prestige* are the most relevant and significant factors, all significant at a 0.1% level. Serviceability plays also an important role, it is significant at a level of 1%.\
+
+It is important to keep in mind that all factors have a positive influence on the repurchase intention. Making improvements in one area while becoming worse in another one can decrease repurchase intention.\
+
+Another point to consider is that one has to differentiate between repurchase behavior given that the phone broke ($P(ri|broken)$) and repurchase behavior in general ($P(ri)$). Making too strong enhancements in durability does not necessarily lead to high repurchase behavior because when the phone does not break, there will be no need to buy a new one. For sure, repurchase can be triggered as well by development of new and "better" smartphone models but leaving all other variables constant, this point is to consider.\
+
+### Interpretation part
+**Interpret your results from a managerial perspective. Do the results of the regression analysis for repurchase intentions differ across brands e.g. Samsung versus Apple versus LG.**
+
+In this paragraph, several linear models are to be established, each considering only 1 brand. Afterwards, the outcomes of the models will be interpreted to possibly detect differences between the importances of the factors for the single brands.
+
+**Apple**
+```{r, message=FALSE, warning=FALSE}
+apple = lm(mean_ri ~ Serviceability + Performance + Aesthetics_Appearance + Ease_of_use + Features_Versatility + Durability + Conformance + Reliability_Flawlessness + Distinctiveness_Prestige, qds[brandrec == 1,]) # create a linear model for apple
+summary(apple) # show the model summary
+```
+The most important factors for an Apple product seem to be *Aesthetics and Appearance*, followed by *Serviceability* and *Distinctiveness and Prestige*. *Performance* and *Conformance* are important as well but subordinate. This makes sense due to how Apple presents itself and public and advertisements.
+
+**Samsung**
+```{r, message=FALSE, warning=FALSE}
+samsung = lm(mean_ri ~ Serviceability + Performance + Aesthetics_Appearance + Ease_of_use + Features_Versatility + Durability + Conformance + Reliability_Flawlessness + Distinctiveness_Prestige, qds[brandrec==2,]) # create a linear model for samsung
+summary(samsung) # show the model summary
+```
+For Samsung, *Reliability and Flawlessness* appears to be the most important aspect, followed by *Performance* and *Ease of use* and *Distinctiveness and Prestige*.
+
+**LG**
+```{r, message=FALSE, warning=FALSE}
+lg = lm(mean_ri ~ Serviceability + Performance + Aesthetics_Appearance + Ease_of_use + Features_Versatility + Durability + Conformance + Reliability_Flawlessness + Distinctiveness_Prestige, qds[brandrec == 3,]) # create a linear model for LG
+summary(lg) # show the model summary
+```
+Apparently, LG users pay much attention to *Conformance*, followed by *Performance* but this preference is less significant than those which have been seen for Apple and Samsung.
+
+**Motorola**
+```{r, message=FALSE, warning=FALSE}
+motorola = lm(mean_ri ~ Serviceability + Performance + Aesthetics_Appearance + Ease_of_use + Features_Versatility + Durability + Conformance + Reliability_Flawlessness + Distinctiveness_Prestige, qds[brandrec == 4,]) # create a linear model for motorola
+summary(motorola) # show the model summary
+```
+For Motorola, it seems that users pay a lot attention to *Ease of use*, this is significant at a 0.1% level. Also *Performance* seems to play an important role.
+
+**Others**
+```{r, message=FALSE, warning=FALSE}
+others = lm(mean_ri ~ Serviceability + Performance + Aesthetics_Appearance + Ease_of_use + Features_Versatility + Durability + Conformance + Reliability_Flawlessness + Distinctiveness_Prestige, qds[brandrec == 5,]) # create a linear model for other brands
+summary(others) # show the model summary
+```
+
+For the rest of the brands, it seems that only *Reliability and Flawlessness* is significant at a 5% level. Admittedly, it is clear that mixing up very different brands under "other brands" will most probably not lead to a clear conclusion about repurchase intention.\
+
+It seems that *Performance* seems to be significant for all brands.
+
+**What do the results of these regressions imply? Please compare the brands on the factor scores. What are points of parity and points of difference for the different brands.**
+
+
+```{r, message=FALSE, warning=FALSE}
+# extract the scores for the different brands from the linear models and create data tables for all of them
+appleDT = data.table("Brand" = "Apple",
+                     "Scores" = predict(apple, type = "response"))
+samsungDT = data.table("Brand" = "Samsung",
+                       "Scores" = predict(samsung, type = "response"))
+lgDT = data.table("Brand" = "LG",
+                  "Scores" = predict(lg, type = "response"))
+motorolaDT = data.table("Brand" = "Motorola",
+                        "Scores" = predict(motorola, type = "response"))
+othersDT = data.table("Brand" = "Others",
+                     "Scores" = predict(others, type = "response"))
+
+scores = rbind(appleDT, samsungDT, lgDT, motorolaDT, othersDT) # connect the data tables to a single one
+scores$Brand = as.factor(scores$Brand) # convert "Brand" to a factor
+
+# create a ggplot with the boxplots for the scores for the brands side by side
+ggplot(scores, aes(x = factor(Brand, level = c("Apple", "Samsung", "LG", "Motorola", "Others")), y = Scores)) + # set the data and the order of the brands
+  geom_boxplot() + # create the boxplots
+  theme(legend.title = element_blank(), # remove the legend title
+          axis.text=element_text(size=12), # change the axis text size
+          axis.title=element_text(size=12), # change the axis title size
+          panel.background = element_rect(fill = "white", colour = "black"), # change the background colors
+          panel.grid.major = element_line(colour = "white", size = 0.5)) + # change the grid appearance3
+  labs(title = "Factor Scores for different brands", # set the title
+       x = "", # no x-axis title
+       y = "Scores") # set the y-axis title
+```
+
+It appears that all factor scores are positive, roughly ranging from 2 to 7. Apple as the supposedly strongest brand has also the highest factor score, followed by Samsung, LG, Motorola and others as it would be intuitive with regard to their public appearance and reputation. Maybe this analysis is a bit outdated since neither LG nor Motorola are under the 5 current most important smartphone brands. They have been replaced by mainly Chinese brands like Huawei, Xiaomi and Oppo. (1) Also, Samsung is the No. 1 with respect to shipments and market share while Apple is only on the 2nd rank. (2) This does not directly refer to brand perception or relevant factors for brand perception but needs to be reminded of when looking at the last section of the analysis.
+
+## References
+
+### Webpages
+
+(1): https://www.globalbrandsmagazine.com/top-10-mobile-brands-in-world/, accessed 05.04.2023, 17:36.
+
+(2): https://www.mbaskool.com/fun-corner/top-brand-lists/17610-top-10-global-mobile-phone-brands.html, accessed 05.04.2023, 17:37.
+
+### Packages
+
+  Revelle, W. (2022) psych: Procedures for Personality and Psychological Research, Northwestern University, Evanston,
+  Illinois, USA, https://CRAN.R-project.org/package=psych Version = 2.2.9.
+  
+  Dowle M, Srinivasan A (2021). _data.table: Extension of `data.frame`_. R package version 1.14.2,
+  <https://CRAN.R-project.org/package=data.table>.
+  
+  Yihui Xie (2022). knitr: A General-Purpose Package for Dynamic Report Generation in R. R package version 1.40.
+
+  Yihui Xie (2015) Dynamic Documents with R and knitr. 2nd edition. Chapman and Hall/CRC. ISBN 978-1498716963
+
+  Yihui Xie (2014) knitr: A Comprehensive Tool for Reproducible Research in R. In Victoria Stodden, Friedrich Leisch and
+  Roger D. Peng, editors, Implementing Reproducible Computational Research. Chapman and Hall/CRC. ISBN 978-1466561595
+
+  Maier MJ (2022). _Companion Package to the Book ``R: Einführung durch angewandte Statistik''_. R package version 0.9.4,
+  <https://CRAN.R-project.org/package=REdaS>.
+  
+  Taiyun Wei and Viliam Simko (2021). R package 'corrplot': Visualization of a Correlation Matrix (Version 0.92). Available
+  from https://github.com/taiyun/corrplot
+  
+  Mangiafico S (2023). _rcompanion: Functions to Support Extension Education Program Evaluation_. R package version 2.4.21,
+  <https://CRAN.R-project.org/package=rcompanion>.
+

@@ -1,0 +1,312 @@
+---
+title: "Case Study 1"
+author: "Hannes Guth"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(caret)
+library(data.table)
+library(Metrics)
+library(geomtextpath)
+```
+
+# {.tabset}
+
+## 1.
+
+#### Use an electronic spreadsheet to plot the data displayed in table 1 and draw a scatter plot (point diagram). Does the multiplicative learning model which assumes the following relationship: Y = AXb apply to this data set? In our case Y are the average manufacturing cost of the last batch of 100 solar panels at Heliotronic in $ after having produced a cumulative production of X solar panels. In the table X represents the column labeled total number of solar panels produced at Heliotronics. b is the experience parameter not to be confused with the learning rate. A is the price or cost of the first unit. Obviously Y = AXb is not a linear relationship of the type that regression analysis can model (y = a + b1 x1). So the question now is to transform the data in order to get a linear relationship. Make an appropriate transformation of the data and redo the plot with the transformed data.
+
+As first step, the the data will be loaded and plotted as a scatter plot as in the spreadsheet.
+
+```{r, message=FALSE, warning=FALSE}
+prod_data = fread("Case_Stud_I.csv") # read the data
+
+ggplot(prod_data, aes(x = number_of_solar_panels, y = manufacturing_cost)) + # create a new ggplot
+  geom_point() + # add a scatter plot
+  labs(title = "Manufacturing costs and number of solar panels") + # adapt labels
+  theme_bw() # use the theme bw
+```
+
+The relation does not seem to be linear. Y (manufacturing cost) and X (already produced units) will be logarithmized to achieve linearity.
+```{r, message=FALSE, warning=FALSE}
+# Logarithmize Y and X
+prod_data$log_number = log10(prod_data$number_of_solar_panels)
+prod_data$log_manufacturing_cost = log10(prod_data$manufacturing_cost)
+
+# Use the "same" plot from before to show the effect of applying the logarithm 
+ggplot(prod_data, aes(x = log_number, y = log_manufacturing_cost)) +
+  geom_point() +
+  labs(title = "Logarithmized manufacturing costs and number of solar panels") +
+  theme_bw()
+```
+\
+
+## 2.
+
+#### Once you have answered the above questions, conduct a linear regression with the transformed data: Use R to estimate the regression model. Please interpret the results of the regression analysis! How well does the model explain the data? What is the learning rate that applies in this case?
+
+As could be seen on the previous side, the relation is now linear. The linear model can be calculated.
+```{r, message=FALSE, warning=FALSE}
+lin_model = lm(log_manufacturing_cost ~ log_number, data = prod_data) # apply the linear model
+coefficients = summary(lin_model)$coefficients # safe the coefficients for later purpose (4.)
+```
+
+The graph representing the model looks as follows.
+```{r, message=FALSE, warning=FALSE}
+# create a regression line
+regression = function(x){
+  summary(lin_model)$coefficients[1,1] + summary(lin_model)$coefficients[2,1] * x
+}
+
+# create a new ggplot for the regression line
+ggplot(prod_data, aes(x = log_number, y = log_manufacturing_cost)) +
+  stat_function(fun = regression) + # plot the line
+  geom_point(aes(y = prod_data$log_manufacturing_cost)) + # add a scatter plot
+  labs(title = "Logarithmized production number and costs", x = "log(Produced Panels)", y = "log(Manufacturing Costs)") + # edit the labels
+  theme_bw() # use the theme bw
+```
+
+
+At first, a graphical overview about the model performance will be provided.
+```{r, message=FALSE, warning=FALSE}
+#par(mfrow=c(2,2)) # set the grid
+#plot(lin_model) # plot the evaluation graphs
+
+summary(lin_model) # show the summary statistic of the model
+```
+the linear regression delivered an intercept of 3.41 and a beta of -0.145 what results in a negative slope and therefore a negative, linear relationship of the log10 of the produced number and the production costs.\
+\
+The model summary shows a very low standard error of 0.01299 and an R-squared and adjusted R-squared, both, with more than 94%, meaning that more than 94% of the variance of log manufacturing costs could be explained by the log number of produced panels. The explanatory power of "log_number" is highly significant at a level of 0.001.
+
+The following paragraph will examine heteroscedasticity of the residuals.
+
+```{r, message=FALSE, warning=FALSE}
+prod_data = data.frame(prod_data) # copy the production data into a dataframe
+prod_data$predictions = predict(lin_model, data = prod_data$log_number) # make predictions for the "training" set
+prod_data$residuals = prod_data$log_manufacturing_cost - prod_data$predictions # retrieve residuals
+residuals_model = lm(prod_data$residuals ~ prod_data$log_number) # fit a model for the residuals
+
+# create a regression line for the residuals
+residuals_line = function(x){
+  residuals_model$coefficients[1] + residuals_model$coefficients[2] * x
+}
+
+# create a ggplot to show the homoscedasticity
+ggplot(data = prod_data, aes(x = log_number, y = residuals)) +
+  geom_point() + # add the data as a scatter plot
+  stat_function(fun = residuals_line) + # show the previously created line
+  labs(title = "Homoskedasticity of the residuals") + # edit the labels
+  theme_bw() # use the theme bw
+  
+rmse(prod_data$log_manufacturing_cost, prod_data$predictions)
+```
+\
+The residuals do not depend on the log_number. Therefore, one can assume homoscedasticity.
+
+Calculating the Learning Rate
+The formula to calculate the learning rate is derived from the formula for the progress ratio from the slides for this Case Study on page 10:\
+$$Learning Rate = 1 - Progress Ratio = 1 - 2^{-E}$$ with E = beta
+This will be calculated as follows. Since the formula does not account for beta being negative, the "-" will be left of in the computation.
+
+```{r, message=FALSE, warning=FALSE}
+1-2^lin_model$coefficients[2] # apply the formula from above
+```
+The learning rate is 0.1019.
+
+## 3.
+
+####  Please use the experience curve estimate from the regression model to calculate the expected average manufacturing cost per solar panel for the 400 solar panels that would be produced. for Switzerland. Hint: estimate the average production cost per solar panel for 4700, 4800, 4900 and 5000 units and compute their mean.
+
+In step, the table merged_data will be created that contains the data that was observed until 2200 units and continues with predictions.
+```{r, message=FALSE, warning=FALSE}
+# create a new data frame to store the data given in the task and combine them with given data from the dataset
+estimates = data.frame(
+  "number_of_solar_panels" = numeric(28),
+  "log_number" = numeric(28),
+  "prediction" = numeric(28))
+
+# fill the first two columns of estimates with the number of produced panels and their log10
+for (i in 1:28){
+  estimates[i,1] = 2200 + i * 100
+  estimates[i,2] = log10(estimates[i,1])
+}
+
+# predict the missing data
+estimates$prediction = predict(lin_model, data.frame(log_number = estimates$log_number))
+
+# combine the two tables
+setnames(estimates, "prediction", "log_manufacturing_cost") # rename one column
+
+merged_data = rbind(prod_data[,c(1,3,4)], estimates) # combine the two tables
+
+# unlog manufacturing costs
+merged_data$unLogCosts = 10^merged_data$log_manufacturing_cost
+```
+
+The predicted mean for the last 400 panels will be calculated as follows.
+
+```{r, message=FALSE, warning=FALSE}
+mean(merged_data$log_manufacturing_cost[47:50]) # calculate the mean for log manufacturing costs
+mean(merged_data$unLogCosts[47:50]) # calculate the mean for the normal scaled manufacturing costs
+```
+The predicted mean production costs of the last 400 produced panels is 688.84. (2.838 for the log-scale)
+
+The results will be shown graphically in the logarithmized and the un-logarithmized scale.
+
+```{r, message=FALSE, warning=FALSE}
+
+# introduce a threshold for plotting the predictions and the real data
+merged_data$`log produced panels` = cut(merged_data$log_number, breaks = c(-Inf,3.35,Inf),labels = c("<=3.35",">3.35"))
+
+# prepare the graph with log transformed data
+plot1 = ggplot(merged_data, aes(log_number, log_manufacturing_cost, color = `log produced panels`)) + # create a new ggplot with the log data
+  geom_point(size = 2) + # point size
+  scale_color_manual(values = c("<=3.35" = "red",
+                                ">3.35" = "darkblue")) + # set the colors
+  theme(#legend.title = element_blank(),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_line(colour = "white", size = 0.5)) +
+  geom_smooth(color = "black") + # add the geom smooth line
+  geom_texthline(yintercept = mean(estimates$log_manufacturing_cost[25:28]), 
+                 label = "Pred. mean last 400 panels = 688.83",
+                 color = "black") + # add the mean of the last four observations
+  labs(title = "Production values and prediction for 5000 panels",
+       y = "Manufacturing costs",
+       x = "Number of produced solar panels") + # edit the labels
+  geom_textvline(xintercept = 3.35,
+                 label = "Prediction from here on",
+                 color = "darkblue") + # add a line where the forecast begins
+  guides(color=guide_legend(title="New Legend Title"))
+
+
+merged_data$`produced panels` = cut(merged_data$number_of_solar_panels, breaks = c(-Inf,2250,Inf),labels=c("<=2250",">2250")) # edit the threshold so that it is no valid for the un-logarithmized data
+
+# create a ggplot for the data on the normal scale
+plot2 = ggplot(merged_data,aes(number_of_solar_panels, unLogCosts, color = `produced panels`)) +
+  geom_point(size = 2) +
+  scale_color_manual(values = c("<=2250" = "red",
+                                ">2250" = "darkblue")) +
+  theme(panel.background = element_rect(fill = "white", colour = "black"),
+        panel.grid.major = element_line(colour = "white", size = 0.5)) +
+  geom_smooth(color = "black") +
+  geom_texthline(yintercept = 10^mean(estimates$log_manufacturing_cost[25:28]),
+                 label = "Pred. mean last 400 panels = 688.83",
+                 color = "black") +
+  labs(title = "Production values and prediction for 5000 panels",
+       y = "Manufacturing costs",
+       x = "Number of produced solar panels") +
+  geom_textvline(xintercept = 2250,
+                 label = "Prediction from here on",
+                 color = "darkblue")
+
+require(gridExtra) # load gridExtra
+grid.arrange(plot1, plot2) # put the plots together
+```
+\
+One can clearly see where the prediction begins since the predicted data are much smoother. Also, it obvious that the logarithm compresses by definition the scale at the upper end.
+
+## 4.
+
+#### Please calculate a 95% confidence interval for the average manufacturing cost per solar panel for the panels produced for Switzerland by using the lower and upper bounds of the confidence interval estimate for the experience parameter. You should calculate two extra regression equations for both limits and then calculate the expected average manufacturing cost per solar panel for the 400 solar panels that would be produced for Switzerland as in exercise 3.
+
+The respective equations are the following: \
+\
+upper limit: \
+$Y = `r round(confint(lin_model, level = 0.95)[1,2],2)`  `r round(confint(lin_model, level = 0.95)[2,2],2)` * x$ \
+\
+regression function: \
+$Y = `r round(coefficients[1,1],2)`  `r round(coefficients[2,1],2)` * x$ \
+\
+lower limit: \
+$Y = `r round(confint(lin_model, level = 0.95)[1,1],2)`  `r round(confint(lin_model, level = 0.95)[2,1],2)` * x$
+
+The confidence intervals present graphically as follows.
+```{r, message=FALSE, warning=FALSE}
+
+# Functions with Different intercept
+lower = function(x){
+  confint(lin_model, level = 0.95)[1,1] + confint(lin_model, level = 0.95)[2,1] * x
+}
+
+upper = function(x){
+  confint(lin_model, level = 0.95)[1,2] + confint(lin_model, level = 0.95)[2,2] * x
+}
+
+regression = function(x){
+  summary(lin_model)$coefficients[1,1] + summary(lin_model)$coefficients[2,1] * x
+}
+
+# create a ggplot for the log scale data
+logScale =
+  ggplot(data.frame(x = merged_data$log_number), aes(x = x)) +
+    geom_smooth(aes(y = merged_data$log_manufacturing_cost), method=lm, level=0.95) +
+    stat_function(fun = upper, aes(color = "upper limit")) +
+      stat_function(fun = regression, aes(color = "Regression function"), size = 1) +
+    geom_point(aes(y = merged_data$log_manufacturing_cost)) +
+    stat_function(fun = lower, aes(color = "lower limit")) +
+    scale_color_manual(values = c("upper limit" = "green",
+                                  "regression function" = "black",
+                                  "lower limit" = "red")) +
+    labs(title = "Confidence interval log scale", x = "log(number of solar panels)", y = "log(Manufacturing costs)") +
+    theme(legend.title = element_blank(),
+          panel.background = element_rect(fill = "white", colour = "black"),
+          panel.grid.major = element_line(colour = "grey", size = 0.5))
+```
+
+```{r, message=FALSE, warning=FALSE}
+# calculate the mean for the upper and lower limit
+mean(10^upper(merged_data$log_number[47:50]))
+mean(10^lower(merged_data$log_number[47:50]))
+```
+The mean for the upper limit for the last 4 datapoint is 888.02 and for the lower limit 534.33.
+```{r, message=FALSE, warning=FALSE}
+# bring the data back to a normal scale
+merged_data$unLogUpper = 10^upper(merged_data$log_number)
+merged_data$unLogLower = 10^lower(merged_data$log_number)
+
+# create a ggplot for the normal scale data
+normalScale =
+  ggplot() +
+    geom_line(aes(x = merged_data$number_of_solar_panels, y = merged_data$unLogUpper, color = "upper limit")) +
+    geom_line(aes(x = merged_data$number_of_solar_panels, y = merged_data$unLogLower, color = "lower limit")) +
+    geom_point(aes(x = merged_data$number_of_solar_panels, y = merged_data$unLogCosts)) +
+    scale_color_manual(values = c("upper limit" = "green",
+                                  "lower limit" = "red")) +
+    labs(title = "Confidence interval normal scale", x = "number of solar panels", y = "Manufacturing costs") +
+    theme(legend.title = element_blank(),
+          panel.background = element_rect(fill = "white", colour = "black"),
+          panel.grid.major = element_line(colour = "grey", size = 0.5))
+```
+
+Here, the previously created plots will be plotted side-by-side.
+```{r, message=FALSE, warning=FALSE, out.width = '1200px'}
+# plot the ggplots side by side
+require(gridExtra)
+grid.arrange(logScale, normalScale, ncol=2)
+```
+
+## References
+
+### Packages
+
+H. Wickham. ggplot2: Elegant Graphics for Data Analysis. Springer-Verlag New York, 2016.
+
+  Kuhn M (2022). _caret: Classification and Regression Training_. R package version 6.0-93,
+  <https://CRAN.R-project.org/package=caret>.
+  
+  Dowle M, Srinivasan A (2021). _data.table: Extension of `data.frame`_. R package version 1.14.2,
+  <https://CRAN.R-project.org/package=data.table>.
+  
+  Hamner B, Frasco M (2018). _Metrics: Evaluation Metrics for Machine Learning_. R package version 0.1.4,
+  <https://CRAN.R-project.org/package=Metrics>.
+  
+  Cameron A, van den Brand T (2022). _geomtextpath: Curved Text in 'ggplot2'_. R package version 0.1.1,
+  <https://CRAN.R-project.org/package=geomtextpath>.
+

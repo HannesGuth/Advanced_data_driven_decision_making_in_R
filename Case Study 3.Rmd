@@ -1,0 +1,646 @@
+---
+title: "Case Study 3"
+author: "Hannes Guth, Artem Demidov"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#  {.tabset}
+
+## Data Preparation
+
+At first, the data will be loaded and missing values will be removed.
+```{r, warning=FALSE, message=FALSE}
+library(data.table)
+library(REdaS)
+library(corrplot)
+library(psych)
+library(lavaan)
+
+setwd("D:/Dokumente/Studium/Master/Université de Genève/Kurse/Advanced Data Driven Decision Making/Case Study 3/Submission")
+
+gld = fread("Case Study III_Structural Equation Modeling.csv")
+im = data.frame(gld[,1:22])
+
+for(i in 1:22){
+  for(j in 1:nrow(im)){
+    if(im[j,i] == 999){
+      im[j,i] = NA
+    }
+  }
+}
+im = data.table(im)
+im = im[complete.cases(im)]
+```
+
+## 1
+
+### **What are the dimensions by which Galeries Lafayette is perceived? Please explain your findings and rational for your final result.**
+
+**Principal Axis Factoring**
+
+```{r, warning=FALSE, message=FALSE}
+kmo = KMOS(im)
+corrplot(kmo$cormat)
+
+r_matrix = corr.test(im)$r # extracts the correlations between variables
+plot(eigen(r_matrix)$values, main = "Eigenvalues for factor numbers (Scree plot)") + abline(h = 1) # plot the Scree plot
+eigen(r_matrix)$values # show the eigenvalues
+```
+
+Since there are 6 factors with Eigenvalues above 1, the first attempt will be to fit a model with 6 factors. Iteratively, images will be excluded on the basis of communalities.
+
+```{r, warning=FALSE, message=FALSE}
+kmo = KMOS(im)
+af = fa(kmo$cormat, nfactors = 6, rotate = "varimax")
+sort(af$communality)
+kmo = KMOS(im[,-c(9,11,16)])
+af = fa(kmo$cormat, nfactors = 6, rotate = "varimax")
+sort(af$communality)
+kmo = KMOS(im[,-c(9,11,16,19)])
+af = fa(kmo$cormat, nfactors = 6, rotate = "varimax")
+sort(af$communality)
+print(af$Structure, cutoff = 0.3, sort = TRUE)
+```
+
+The best model could explain 74.3% of the total variance, using 6 factors. Since the Eigenvalues of the 7th factor is not too far below 1, a model with 7 factors will be considered. The same iterative approach will be pursed.
+
+```{r, warning=FALSE, message=FALSE}
+kmo = KMOS(im)
+af = fa(kmo$cormat, nfactors = 7, rotate = "varimax")
+sort(af$communality)
+kmo = KMOS(im[,-c(9,11,16)])
+af = fa(kmo$cormat, nfactors = 7, rotate = "varimax")
+sort(af$communality)
+kmo = KMOS(im[,-c(9,11,16,19)])
+af = fa(kmo$cormat, nfactors = 7, rotate = "varimax")
+sort(af$communality)
+print(af$Structure, cutoff = 0.3, sort = TRUE)
+```
+
+79% of the total variance could be explained by 7 factors. This is better than the model with 6 factors.\
+A model with 8 factors will be considered as well, using the same iterative approach.
+
+```{r, warning=FALSE, message=FALSE}
+kmo = KMOS(im)
+af = fa(kmo$cormat, nfactors = 8, rotate = "varimax")
+sort(af$communality)
+kmo = KMOS(im[,-c(9,11)])
+af = fa(kmo$cormat, nfactors = 8, rotate = "varimax")
+sort(af$communality)
+print(af$Structure, cutoff = 0.3, sort = TRUE)
+```
+
+The Image Im19 has not been excluded in this approach, based on communalities. Nevertheless, the model was not able to explain more than 78.8% of the total variance, what is slightly lower than before the model with 7 factors. Also, the loading structure is not better and and the loadings themselves are not higher than for 7-factor model. Therefore, the model with 7 factors will be used in the following Confirmatory factor Analysis.
+
+Based on this model, the following Factors were identified and implemented in a Confirmatory factor Analysis model.
+
+```{r, warning=FALSE, message=FALSE}
+# reproducing the feature selection
+data = im[,-c(9,11,16,19)]
+
+# model definition
+model<-"
+Aesthetics =~ Im3 + Im4 + Im5
+Athmosphere =~ Im20 + Im21 + Im22
+Gourmet_Food =~ Im8 + Im10 + Im14
+Assortment =~ Im1 + Im2 + Im15
+France =~ Im6 + Im7
+Trendiness =~ Im17 + Im18
+Brands =~ Im12 + Im13
+"
+
+# model implementation
+fit = cfa(model, data = data, missing = "ML")
+
+# model summary
+summary(fit, fit.measures = TRUE, standardized = TRUE)
+```
+\
+*Interpretation*\
+The RMSEA, the Root Mean Squared Error of Approximation is excellent below 0.01, good below 0.05 and mediocre below 0.08 or 0.10, depending on the source. The RMSEA in this model is 0.075, so still acceptable but not great. (1)\
+\
+In the data set, there are 385 observations without missing values which is smaller than 1,000. Therefore, the ratio of the Test statistic and the degrees of freedom should be lower than 5.\
+$\frac{362.2}{114} = 3.186 < 5$\
+This requirement is fulfilled.\
+\
+The CFI is 0.954 which is larger than 0.95 and therefore a good sign for the fit between the model and the data.\
+
+```{r, message=FALSE, warning=FALSE}
+inspect(fit, "std")$psi
+```
+
+\
+The single factors are not strongly correlated, what is a good sign. All of them are below a correlation of 0.6
+
+## 2 {.tabset}
+
+### Confirmatory factor analysis
+
+To approach the problem of hardcoding we implemented the interface which allows to create a causality graph as a set of nodes and then convert it to CFA model.
+\
+Here we implements the CFA_node class and defines all nodes of the model Factors -\> Mediators -\> Outcomes, including direct effects from Factors to Outcomes.
+
+```{r}
+library(methods)
+
+# The node class. Each node has the name, measurement and structural part (parent nodes) - mixed lists of nodes and names of columns. 
+# The value previous_level indicates whether to include the structural part of the parent nodes to the structural part of the node or not. Allows to avoid repeating the list of factors in the output's structural part.
+setClass(Class = "CFA_node",
+         representation = list(
+           name = "character",
+           measurement_part = "list",
+           structural_part = "list",
+           previous_levels = 'numeric'
+         ),
+         prototype = list(
+           name = NA_character_,
+           measurement_part = list(),
+           structural_part = list(),
+           previous_levels = 0
+         )
+)
+```
+
+```{r}
+Aesthetics = new(
+  'CFA_node',
+  name='Aesthetics',
+  measurement_part=list('Im3', 'Im4', 'Im5'),
+  structural_part=list(),
+  previous_levels=0
+)
+
+Athmosphere = new(
+  'CFA_node',
+  name='Athmosphere',
+  measurement_part=list('Im20', 'Im21', 'Im22'),
+  structural_part=list(),
+  previous_levels=0
+)
+
+Gourmet_Food = new(
+  'CFA_node',
+  name='Gourmet_Food',
+  measurement_part=list('Im8', 'Im10', 'Im14'),
+  structural_part=list(),
+  previous_levels=0
+)
+
+
+Assortment = new(
+  'CFA_node',
+  name='Assortment',
+  measurement_part=list('Im1', 'Im2', 'Im15'),
+  structural_part=list(),
+  previous_levels=0
+)
+
+
+France = new(
+  'CFA_node',
+  name='France',
+  measurement_part=list('Im6', 'Im7'),
+  structural_part=list(),
+  previous_levels=0
+)
+
+Trendiness = new(
+  'CFA_node',
+  name='Trendiness',
+  measurement_part=list('Im17', 'Im18'),
+  structural_part=list(),
+  previous_levels=0
+)
+
+
+Brands = new(
+  'CFA_node',
+  name='Brands',
+  measurement_part=list('Im12', 'Im13'),
+  structural_part=list(),
+  previous_levels=0
+)
+
+
+factors = list(Aesthetics, Athmosphere, Gourmet_Food, Assortment, France, Trendiness, Brands)
+
+```
+
+```{r}
+
+satisfaction = new(
+  'CFA_node',
+  name='satisfaction',
+  measurement_part=list('SAT_1', 'SAT_2', 'SAT_3'),
+  structural_part=factors,
+  previous_levels=0
+)
+
+
+commitment = new(
+  'CFA_node',
+  name='commitment',
+  measurement_part=list('COM_A1', 'COM_A2', 'COM_A3', 'COM_A4'),
+  structural_part=factors,
+  previous_levels=0
+)
+
+mediators = list(satisfaction, commitment)
+```
+
+```{r}
+
+repurchase = new(
+  'CFA_node',
+  name='repurchase',
+  measurement_part=list('C_REP1', 'C_REP2', 'C_REP3'),
+  structural_part=mediators,
+  previous_levels=1
+)
+
+
+cocreation = new(
+  'CFA_node',
+  name='cocreation',
+  measurement_part=list('C_CR1', 'C_CR2', 'C_CR3', 'C_CR4'),
+  structural_part=mediators,
+  previous_levels=1
+)
+
+outputs = list(repurchase, cocreation)
+
+```
+
+The structure of the graph is defined, now we need to implement a set of methods to convert list of output nodes to the model for CFA.
+
+```{r}
+# Function to find all nodes of the graph, visiting them recursively. Stores all nodes in the list.
+collect_all_nodes <- function(outputs) {
+  all_nodes <- list()
+  names = list()
+  queue <- outputs
+  
+  while (length(queue) > 0) {
+    node <- queue[[1]]
+    queue <- queue[-1]
+    
+    if (class(node) != 'CFA_node'){
+      next
+    }
+    if (any(sapply(all_nodes, function(x) x@name == node@name))){
+      next
+    }
+    
+    # Add the current node to the list of all nodes
+    all_nodes <- c(all_nodes, node)
+    names = c(names, node@name)
+    # Add child nodes to the queue
+    if (!is.null(node@measurement_part)) {
+      queue <- c(queue, node@measurement_part)
+    }
+    if (!is.null(node@structural_part)) {
+      queue <- c(queue, node@structural_part)
+    }
+  }
+  
+  return(all_nodes)
+}
+```
+
+```{r}
+# Function to collect paths from parents to main_node
+collect_paths <- function(node, parent_names, current_path) {
+  if (is.character(node)) {
+    parent_names[[node]] <- append(parent_names[[node]], list(current_path))
+  } else {
+    parent_names[[node@name]] <- append(parent_names[[node@name]], list(current_path))
+    if (length(node@structural_part) > 0) {
+      for (i in seq_along(node@structural_part)) {
+        parent_node <- node@structural_part[[i]]
+        parent_names = collect_paths(parent_node, parent_names, c(current_path, node@name))
+      }
+    }
+  }
+  return(parent_names)
+}
+
+# Function to collect parent names and their corresponding paths
+collect_parent_names <- function(node, parent_names) {
+  return(collect_paths(node, parent_names, c()))
+}
+```
+
+```{r}
+getPrefix <- function(string) {
+  substr(string, 1, 3)
+}
+
+# Function to get strings for total and mediation effects for particular node of the graph. 
+# The mediation effect is considered is it goes through the parent nodes. In our case we consider mediation effects which ends in output nodes.
+get_total_and_mediation_effects = function(main_node){
+  parent_paths = list() 
+  parent_paths = collect_parent_names(main_node, parent_paths)
+  total_effects = ''
+  mediation_effects = ''
+  for (name in names(parent_paths)){
+    paths = parent_paths[[name]]
+    if (name == main_node@name){
+      next
+    }
+    total_effect = NA
+    for (path in paths){
+      new_path = append(path, name)
+      result = NA
+      for (i in 1:(length(new_path) - 1)){
+        coef = paste('d', new_path[i + 1], new_path[i], sep='_')
+        if (is.na(result)){
+          result = coef
+        } else {
+          result = paste(result, coef, sep=' * ')
+        }
+      }
+      if (is.na(total_effect)){
+        total_effect = result
+      } else {
+        total_effect = paste(total_effect, result, sep=' + ')
+      }
+      if (length(new_path) > 2){
+        prefixList <- sapply(rev(new_path), getPrefix)
+        mediation_effect_name = paste('m', paste(prefixList, collapse='_'), sep='_')
+        mediation_effect = paste(mediation_effect_name, result, sep=' := ')
+        mediation_effects = paste(mediation_effects, mediation_effect, sep='\n\n')
+      }
+    }
+    total_efffect_name = paste('t', name, main_node@name, sep='_')
+    total_effect = paste(total_efffect_name, total_effect, sep=' := ')
+    total_effects = paste(total_effects, total_effect, sep='\n\n')
+    
+  }
+  return(list(total_effects, mediation_effects))
+}
+
+# Function which adds coefficients to the nodes in the model.
+# Later it will be used in computation of total and mediation paths.
+value_with_coef = function(node_name, value_name, add_coef){
+  if(!add_coef){
+    return(value_name)
+  }
+  coef_name = paste('d', value_name, node_name, sep='_')
+  return(paste(coef_name, value_name, sep=' * '))
+}
+```
+
+```{r}
+
+# The function which creates string of CFA model fro particular node.
+# The line contains structural or measurement equation of this node.
+node_to_model_line = function(node, node_list, is_measurment){
+  separator = ' ~ '
+  if (is_measurment){
+    separator=' =~ '  
+  } 
+  
+ if (length(node_list) > 0) {
+        names <- lapply(node_list, function(named_node) {
+          if (is.character(named_node)) {
+            value_with_coef(node@name, named_node, !is_measurment)
+          } else {
+            value_with_coef(node@name, named_node@name, !is_measurment)
+          }
+        })
+        names = paste(names, collapse = ' + ')
+        model_line = paste(node@name, separator, names)
+        return(model_line)
+ }
+  return(NA)
+}
+```
+
+```{r}
+# The function which add the structural part of the parent nodes to the structural part of the node if necessary. 
+get_node_list = function(node){
+  node_list = c(node@structural_part)
+  if (node@previous_levels == 1){
+    for (prev_node in node@structural_part){
+      node_list = c(node_list, prev_node@structural_part)
+    }
+  }
+  return(node_list)
+}
+```
+
+```{r}
+# The function which converts list of CFA_nodes to the string which represents CFA model.
+build_model = function(outputs){
+  nodes = collect_all_nodes(outputs)
+  measurement_model = '# Measurement model\n'
+  structural_model = '# Structural model\n'
+  for (node in rev(nodes)){
+      measurement_part = node@measurement_part
+      measurement_line = node_to_model_line(node, measurement_part, TRUE)
+      if (!is.na(measurement_line)){
+        measurement_model = paste(measurement_model, measurement_line, sep='\n\n')
+      }
+      
+      structural_part = get_node_list(node)
+      structural_line = node_to_model_line(node, structural_part, FALSE)
+      if (!is.na(structural_line)){
+        structural_model = paste(structural_model, structural_line, sep='\n\n')
+      }
+      
+  }
+  total_effects = '# Total effects'
+  mediation_effects = '# Mediation effects'
+  
+  for (main_node in outputs){
+    total_effects_node_name = paste('\n# total effect for', main_node@name, sep=' ')
+    effects_node = get_total_and_mediation_effects(main_node)
+    total_effects_node = effects_node[[1]]
+    mediation_effects_node = effects_node[[2]]
+    mediation_effects = paste(mediation_effects, mediation_effects_node, sep='\n\n')
+    total_effects_node = paste(total_effects_node_name, total_effects_node, sep='\n\n')
+    total_effects = paste(total_effects, total_effects_node, sep='\n\n')
+  }
+  model = paste(measurement_model, structural_model, mediation_effects, total_effects, sep='\n\n')
+  return(model)
+}
+
+```
+
+Model building
+
+```{r}
+model_full = build_model(outputs)
+cat(model_full)
+```
+
+Data preparation and fitting of the CFA model.
+
+```{r}
+data_full = replace(gld, gld == 999, NA)
+fit = cfa(model_full, data = data_full, missing='ML', estimator="MLR")
+summary(fit, fit.measures = TRUE, standardized = TRUE)
+```
+
+Now let's have a look on the visual representation of the model.
+
+```{r}
+library(semPlot)
+semPaths(fit, nCharNodes = 0, style = "lisrel", rotation = 2)
+```
+
+The model has all necessary nodes and edges, so our tool works correctly!
+
+Comments on the model itself: 
+
+1. The Chi$^2$-Test has a huge value of statistic, so the hypothesis that the estimated $\sum (\theta)$ reproduces empirical sample covariance matrix is rejected (p-value < 0.05). 
+2. On the other hand, the RMSEA $= 0.049 \leq 0.05$, that indicates a good fit 
+3. The CFI $= 0.953 > 0.95$, that also point out that we have to accept model. 
+
+Chi-Square Test is sensitive to the sample size, so if we consider the sample size is big, it may lead to rejection of the model even with trivial misspesification.
+
+Our decision is to accept the model and to use it for further analysis.
+
+### 2.1
+
+**Are the mechanism driving satisfaction and affective commitment similar?**\
+\
+**Aesthetics:** The p-value for aesthetics is far above 0.05 for both, affective commitment and satisfaction, what indicates that there is no significant impact for either of them.\
+\
+**Atmosphere:** Atmosphere has for affective commitment a p-value of 0.000, what means that the effect on commitment is highly significant and estimate of the effect is the largest for commitment at all (0.372). For satisfaction, the p-value is 0.159 what is larger than 0.05 and therefore not significant.\
+\
+**Gourmet Food:** For affective commitment, the p-value is over 0.37, so not significant but for satisfaction, the p-value is 0.014, so below 0.05 and therefore significant. The effect estimate is 0.201 which is the second largest for satisfaction at all.\
+\
+**Assortment:** Assortment has a significant effect (estimate = 0.156, p-value = 0.001) on affective commitment and also on satisfaction (estimate = 0.247, p-value = 0.000). Those values are very significant, so assortment seems to be one of the most important drivers at all.\
+\
+**France:** The connection to France seems to be important for affective commitment as well, regarding the p-value of 0.002 and an effect estimate of 0.210. For satisfaction, the effect is not significant at a 5% level but on a 10% level. Nevertheless, even setting the 10% level and taking "France" into account, its effect on satisfaction is rather small with an estimate of 0.091.\
+\
+**Trendiness:** Trendiness has p-values for both, affective commitment and satisfaction, distinct larger than 0.05 and 0.1 and the effect estimates are rather small. This factor does not seem to have any influence on both mediators.\
+\
+**Brands:** For affective commitment, the choice of brands has a p-value of 0.035 and therefore smaller than 0.05 but not significant at a 1% level. The effect estimate is the only one for affective commitment which has a negative sign. "Brands" was made up from the images "luxury brands" and "up to data designer brands". It leads to the idea that customers rather appreciate to not have too many luxury brands what would intuitively lead higher prices. This gives insight about a possibly more price-sensitive clientèle than expected which feels more committed to conventional brands and luxury brands decrease affective commitment to Galeries Lafayette. For satisfaction, this factor is not significant (p-value = 0.782).
+
+### 2.2
+
+**Are satisfaction and affective commitment mediating the impact of image perceptions on outcomes? If yes for which outcomes?**\
+\
+The first aspect to mention is that there are no significant direct effects from the factors on the outcome variables. The only significant effects on outcome variables are from the mediators. So yes, satisfaction and affective commitment do mediate the impacts of images (factors) on the outcome. The effect from the mediators on the outcomes are highly significant with p-values with maximum 0.002.\
+\
+**Mediating effects on repurchase intention**\
+The effect of atmosphere that is mediated through "affective commitment" is highly significant with a p-value of 0.000 a positive estimate which is relatively large, 0.069. Also the effect of assortment is mediated by "affective commitment" with a p-value of 0.004 which is significant at a 1%-level as well but not as significant as for atmosphere. Also, the effect estimate of assortment is smaller (0.029). Similarly significant (p-value = 0.006) is the effect of the factor France which is mediated by "affective commitment" but with a higher effect estimate. Brand is slightly significant at a 5%-level (p-value = 0.046), and it has a negative estimate of the effect what has already been addressed in the section before.\
+The factors whose effect is significant and was mediated by "satisfaction" are Gourmet Food (slightly in the 5% confidence interval with a p-value of 0.046 and an effect estimate of 0.040) and Assortment (significant at a 1%-level with a p-value of 0.001 and a positive effect estimate of 0.049.\
+\
+**Mediating effect on Cocreation intention**\
+Mediated by "affective commitment" and significant are the effects of Atmosphere (highly significant with a p-value of 0.000 and the by far biggest impact estimate of more than 0.2), Assortment (significant at a 1%-level with a p-value of 0.004 and an effect estimate 0.086 which is also large), France (significant at a 1%-level and a p-value of 0.005 and a big effect estimate of 0.086) and Brand (significant at a 5%-level with a p-value of 0.045 and a big, negative effect estimate of 0.094).\
+The only factor that has a significant, by satisfaction mediated effect is Assortment which is with a p-value of 0.004 significant at a 1%-level and a large negative effect of -0.092. Assortment could be associated with Brands what could explain the negative sign but this outcome is still surprising.\
+\
+**The most important factors**\
+In summary, Atmosphere, when mediated by commitment is highly significant for both outcome variables and it has the largest effect estimate for the respective outcome variable. Also, the effect of Assortment is significant for each mediator for each outcome variable at a 1%-level while it has a negative impact when on Cocreation intention when mediated through "satisfaction" what is suspicious. Finally, the big impact on Cocreation intention of the Factor France is to underline when mediated through "affective commitment"
+
+## 3
+
+### **What is driving the two distinct outcomes (repurchase and co-creation intention): Please rank the image dimensions with respect to the total effect on each outcome? Interpret your results.**
+
+The dimensions Atmosphere, Assortment and France are driving Repurchase Intention, because their total effect has p-value below 0.05. Satisfaction and commitment mediators' effects are significant as well. The total effects of dimensions are: 
+
+1. Atmosphere: 0.081
+2. Assortment: 0.078 
+3. France: 0.057
+
+So, the atmosphere and assortment both have a big effect on repurchase, while assortment France's dimension's effect is much lower. The two-sigma interval of atmosphere/assortment does not intersect the confidence interval of the factor France, so we can assume that the effect is significantly lower.
+
+The Cocreation Intention is driven by such dimensions as Atmosphere and France (p-value \< 0.05). Both satisfaction and commitment mediators' effects are significant again. The dimensions have following total effects: 
+
+1. Atmosphere: 0.181
+2. France: 0.081
+
+The atmosphere's effect is more than two times bigger than France's effect.
+
+Confidence intervals for effects of chosen dimensions don't include zero that conform with the fact that they are significant.
+
+As a part of experiment we will build model only with significant effects to demonstrate how real causality graph looks like according to our analysis. To do it quickly we can use our interface and redefine only a couple of nodes in the graph
+
+```{r}
+
+satisfaction = new(
+  'CFA_node',
+  name='satisfaction',
+  measurement_part=list('SAT_1', 'SAT_2', 'SAT_3'),
+  structural_part=list(Gourmet_Food, Assortment),
+  previous_levels=0
+)
+
+
+commitment = new(
+  'CFA_node',
+  name='commitment',
+  measurement_part=list('COM_A1', 'COM_A2', 'COM_A3', 'COM_A4'),
+  structural_part=list(Athmosphere, Assortment, France, Brands),
+  previous_levels=0
+)
+
+mediators = list(satisfaction, commitment)
+
+repurchase = new(
+  'CFA_node',
+  name='repurchase',
+  measurement_part=list('C_REP1', 'C_REP2', 'C_REP3'),
+  structural_part=mediators,
+  previous_levels=0
+)
+
+
+cocreation = new(
+  'CFA_node',
+  name='cocreation',
+  measurement_part=list('C_CR1', 'C_CR2', 'C_CR3', 'C_CR4'),
+  structural_part=mediators,
+  previous_levels=0
+)
+
+outputs = list(repurchase, cocreation)
+
+model_short = build_model(outputs)
+
+fit_short = cfa(model_short, data = data_full, missing='ML', estimator="MLR")
+
+semPaths(fit_short, nCharNodes = 0, style = "lisrel", rotation = 2)
+```
+
+According to our research atmosphere is the most important driving factor for both repurchase and cocreation intentions. France is another dimension which has a significant effect for both outputs but the effect is lower. So, focusing on both atmosphere and France factors we can receive improvement in both intentions. To improve only reprechase we can focus on assortment, while cocreation is driven by atmosphere much more than repurchase is driven by it.
+
+Our findings have following interpretation: our clients mostly appreciate atmosphere and relation with France in the Galeries Lafayette, if we measure client's satisfaction by repurchase and cocreation intentions. The probability of repurchasing is also driven by assortment, which means that clients which are satisfied with assortment are more likely to buy something again.
+
+## References
+
+
+### Websites
+
+(1): <https://stats.oarc.ucla.edu/spss/seminars/introduction-to-factor-analysis/a-practical-introduction-to-factor-analysis-confirmatory-factor-analysis/#>:\~:text=RMSEA%20is%20the%20root%20mean,%2C%20that%20the%20RMSEA%20%3C%200.05., retrieved 02.05.2023, 18:18.
+
+  
+### Packages
+
+  Dowle M, Srinivasan A (2021). _data.table: Extension of
+  `data.frame`_. R package version 1.14.2,
+  <https://CRAN.R-project.org/package=data.table>.
+  
+  Maier MJ (2022). _Companion Package to the Book ``R: Einführung durch
+  angewandte Statistik''_. R package version 0.9.4,
+  <https://CRAN.R-project.org/package=REdaS>.
+  
+  Taiyun Wei and Viliam Simko (2021). R package 'corrplot':
+  Visualization of a Correlation Matrix (Version 0.92). Available from
+  https://github.com/taiyun/corrplot
+
+  Revelle, W. (2022) psych: Procedures for Personality and
+  Psychological Research, Northwestern University, Evanston, Illinois,
+  USA, https://CRAN.R-project.org/package=psych Version = 2.2.9.
+
+  Yves Rosseel (2012). lavaan: An R Package for Structural Equation
+  Modeling. Journal of Statistical Software, 48(2), 1-36.
+  https://doi.org/10.18637/jss.v048.i02

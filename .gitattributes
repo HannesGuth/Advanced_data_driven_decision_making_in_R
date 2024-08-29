@@ -6,3 +6,5 @@ vendor/**/* linguist-vendored
 
 # Exclude generated files
 *.min.js linguist-generated
+
+* linguist-vendored

@@ -1,2 +1,8 @@
-*.min.css linguist-vendored=false
-*.min.js linguist-vendored=false
+# Exclude the entire `vendor` directory from language stats
+vendor/**/* linguist-vendored
+
+# Exclude all markdown files
+*.md linguist-documentation
+
+# Exclude generated files
+*.min.js linguist-generated
